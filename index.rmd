@@ -1,0 +1,122 @@
+---
+title: "MachineLearning"
+author: "Victor Kim"
+date: "2 June 2019"
+output: html_document
+---
+##Synopsis
+The data for the this paper is coming from the following publication:
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In the research above, particiapnts were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants was made available for the further studies, one of which is represented by this paper.
+
+##Setting up: Data download and preparation
+###Data download
+
+```{r warning = FALSE, message = FALSE}
+library(caret)
+setwd("C:/Users/Marin/Documents/Victor/ProgrAssignCourse8Week4/MachineLearning/MachineLearning")
+
+
+traininglink<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testinglink<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trnfile<-"pml-training.csv"
+quizfile<-"pml-testing.csv"
+
+if (!(file.exists(trnfile))) {
+        download.file(traininglink, destfile = trnfile)
+}
+
+if (!(file.exists(quizfile))) {
+        download.file(testinglink, destfile = quizfile)
+}
+
+```
+Data is available in two parts: training and testing data sets. In reality, testing data set is used for quiz purposes, hence setting it aside with the corresponding name:
+
+```{r warning = FALSE, message = FALSE}
+trn <- read.table(trnfile, header=TRUE, sep=",",
+                  stringsAsFactors=FALSE)
+qz<-read.table(quizfile, header=TRUE, sep=",",
+                stringsAsFactors=FALSE)
+```
+###Data preparation:
+1) qz data contains variables entirely populated by NAs, which will be impossible to use for predictions. These variable are useless for the model build hence eliminating them from both training and qz data sets.   
+2) First 7 variables are not related to the model, so will take the related columns out.
+3) Explicitly convert the outcome to the factor class
+
+```{r warning = FALSE, message = FALSE}
+#In qz file identify NA variables: cannot be used for prediction
+qz<-rbind(qz, colSums(is.na(qz)))#add row with the number of NAs in each var
+
+#build a vector with column names of NA vars
+drop <- vector(mode="list", length=0)
+for (i in 1:160) {if(qz[21,i]==20) drop<-c(drop, colnames(qz[i]))
+}#the var is NA if the number of NAs is 20
+
+#eliminate vars from trn&qz based on names in drop and irrelevant ones [,-7:-1]
+trn<-trn[ , !(names(trn) %in% drop)]
+trn<-trn[,-7:-1]
+qz<-qz[ , !(names(qz) %in% drop)]
+qz<-qz[,-7:-1]
+
+qz<-qz[-21,]
+
+#convert classe into factor
+trn$classe<-as.factor(trn$classe)
+```
+
+##Out of sample error. PCA analysis
+
+Out of sample error is the error rate expected on a new data set: qz data set in this case. Contrasting to in sample error, that is got on the same data set which was used to build the predictor: trn data set. The former is of the primary concern as getting it optimal is a balancing act between minimizing the bias (resulting from picking of too small a number of variables) and overfitting (resulting from picking of too large a number of variables). For current purposes assuming .95 is a reasonable accuracy to achieve 100% prediction on qz data set.
+```{r warning = FALSE, message = FALSE}
+trn.pca <- prcomp(trn[,c(1:52)], center = TRUE,scale. = TRUE)
+print(summary(trn.pca))
+```
+**Conclusion:** To achieve .05 out of sample error rate it is enough to include the first 24 features into the model.
+
+##Modelling
+
+###Parallel processing
+Picking Random Forest as an algorithm for the model. Considering that RF is computationally intense as well as the volume of data to train on, enable parallel processing to improve the performance as per Leo Igreski article **(Leo thanks a million for this)**: https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
+```{r warning = FALSE, message = FALSE}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+```
+
+###Cross-validation
+Two alternatives: either split trn into training and testing data sets, or, instead, use the caret functionality to perform cross-validation automatically. The latter is enabled through the trControl() parameters, which are defined within fitControl variable as follows:   
+1) method is set to "cv" - cross validation   
+2) the number of folds in K-Fold validations is set to 5: 
+
+```{r warning = FALSE, message = FALSE}
+        
+set.seed(56789)
+fitControl <- trainControl(method = "cv",
+        number = 5,
+        allowParallel = TRUE)
+```
+###Building the model:
+```{r warning = FALSE, message = FALSE}
+
+x <- trn[,1:24]
+y <- trn[,53]
+
+fit <- train(x,y, method="rf",data=trn, trControl = fitControl)
+```
+
+###De-register parallel processing cluster
+```{r warning = FALSE, message = FALSE}
+stopCluster(cluster)
+registerDoSEQ()
+```
+##Predicting the qz cases
+```{r warning = FALSE, message = FALSE, results="hide"}
+print(predict(fit, qz))#hiding results in line with the honour code
+```
+**Conclusion**: prediction accuracy is 100% in line with the out of sample error assessment above.
